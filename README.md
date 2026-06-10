@@ -1,58 +1,137 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# Создание модели Eloquent для трека
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+Реализация модели `Track` для MVP музыкального плеера наподобие «Яндекс Музыки» или «Spotify». Сервис предназначен для использования в России.
 
-## About Laravel
+## Контекст
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+Модель спроектирована как ядро каталога треков. Помимо самой модели создан полный пайплайн: миграция → factory → seeder → контроллер → blade-выдача.
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
-
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
-
-## Learning Laravel
-
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
-
-In addition, [Laracasts](https://laracasts.com) contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
-
-You can also watch bite-sized lessons with real-world projects on [Laravel Learn](https://laravel.com/learn), where you will be guided through building a Laravel application from scratch while learning PHP fundamentals.
-
-## Agentic Development
-
-Laravel's predictable structure and conventions make it ideal for AI coding agents like Claude Code, Cursor, and GitHub Copilot. Install [Laravel Boost](https://laravel.com/docs/ai) to supercharge your AI workflow:
+## Быстрый старт
 
 ```bash
-composer require laravel/boost --dev
-
-php artisan boost:install
+composer install
+cp .env.example .env
+php artisan key:generate
+php artisan migrate --seed
+php artisan serve
 ```
 
-Boost provides your agent 15+ tools and skills that help agents build Laravel applications while following best practices.
+Открыть `http://localhost:8000` — таблица треков с пагинацией, связями, текстами песен.
 
-## Contributing
+Без внешней БД — SQLite (`database/database.sqlite`).
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+---
 
-## Code of Conduct
+## Модель Track — описание полей
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+| Поле | Тип | Зачем нужно |
+|------|-----|-------------|
+| `title` | string(255) | Название трека |
+| `lyric` | json (nullable) | Текст песни. JSON выбран чтобы в будущем хранить субтитры с таймкодами (`[{time: 0.0, text: "..."}]`). Пока что одна строка |
+| `audio_url` | string(255) (nullable) | Ссылка на аудио. Сейчас поле — при росте проекта можно заменить полиморфной связью (разные форматы/качества) |
+| `cover_url` | string(255) (nullable) | Ссылка на обложку. Аналогично — под замену на полиморфную связь |
+| `duration` | unsignedInteger | Длительность в миллисекундах. |
+| `age_rating` | enum (AgeRating) | Возрастной рейтинг. Enum `0+`, `6+`, `12+`, `16+`, `18+`. При выходе в другие страны — замена на `belongsToMany` (разные системы рейтингов) |
+| `play_count` | unsignedBigInteger | Счётчик прослушиваний. Позволяет сортировку по популярности |
+| `copyright_holder_id` | foreignId → holder | Правообладатель (лейбл, артист и т.д.). Отдельная сущность чтобы у одного трека был один правообладатель, но у одного правообладателя — много треков |
+| `licensed_at` | timestamp (nullable) | Когда оформлена лицензия. Может отличаться от даты загрузки |
+| `license_expires_at` | timestamp (nullable) | Когда истекает лицензия. Позволяет автоматически скрывать треки с истёкшими правами |
+| `version` | string(10) | Версия трека (1.0.0, 2.0.0 и т.д.) |
+| `released_at` | timestamp (nullable) | Дата релиза песни. Отличается от `created_at` (дата загрузки в систему) |
+| `is_active` | boolean | Доступен ли трек пользователям. Позволяет скрывать трек без удаления |
+| `timestamps` | | `created_at` / `updated_at` |
+| `softDeletes` | | Мягкое удаление — трек снят с площадки, но данные сохранены (история, плейлисты, статистика) |
 
-## Security Vulnerabilities
+### Связи
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+| Связь | Тип | Таблица | Обоснование |
+|-------|-----|---------|-------------|
+| artists | belongsToMany | artist_track | У трека может быть несколько соавторов |
+| albums | belongsToMany | album_track | Трек может входить в несколько альбомов (каждый соавтор добавил совместный трек в свой альбом) |
+| genres | belongsToMany | genre_track | Простая реализация жанров для MVP. Для качественного поиска по похожим трекам в будущем потребуется более сложная система |
+| copyrightHolder | belongsTo | tracks.copyright_holder_id | Правообладатель трека |
 
-## License
+### Индексы
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+| Индекс | Зачем |
+|--------|-------|
+| `title` | Поиск по названию |
+| `(is_active, released_at)` | Выдача активных треков с сортировкой по дате релиза |
+| `(is_active, play_count)` | Выдача активных треков с сортировкой по популярности |
+| `license_expires_at` | Мониторинг истекающих лицензий |
+| pivot-таблицы: индексы на `artist_id`, `album_id`, `genre_id` | Обратный поиск (треки артиста / альбома / жанра) |
+
+---
+
+## Что может быть улучшено при развитии проекта
+
+### Поля и типы
+- **audio_url / cover_url** → замена на полиморфную связь `media()` (Laravel MediaLibrary или своя), чтобы хранить файлы в разных форматах и качествах
+- **age_rating** → замена enum на `belongsToMany` с таблицей возрастных рейтингов — для поддержки разных систем рейтингов при экспансии в другие страны
+- **lyric** → структура с таймкодами для субтитров (уже учтено в типе `json`)
+- **play_count** → вынести в отдельную таблицу `track_plays` с аналитикой (кто, когда, откуда), а текущее поле использовать как кешированный агрегат
+- **version** → отдельная таблица `track_versions` если потребуется хранить историю версий
+
+### Связи
+- **genres** → иерархические жанры (дерево) + система тегов для качественного поиска похожих треков
+- Добавить связь `playlists` (belongsToMany) — плейлисты пользователей
+- Добавить связь `listens` (hasMany) — история прослушиваний для персональных рекомендаций
+
+### Инфраструктура
+- Перейти с SQLite на PostgreSQL — полнотекстовый поиск по `title` и `lyric` через `tsvector`, поддержка конкурентной записи
+- Кеширование счётчиков (`play_count`) через Redis — чтобы не обновлять запись трека при каждом прослушивании
+- Очереди для асинхронного инкремента `play_count`
+
+### Администрирование
+- Filament / Nova — админка для управления треками, правообладателями, лицензиями
+- Добавить `licensed_at` / `license_expires_at` в планировщик (`php artisan schedule`) для автоматической деактивации треков с истёкшей лицензией
+
+---
+
+## Структура проекта
+
+```
+app/
+├── Enums/
+│   └── AgeRating.php
+├── Http/Controllers/
+│   └── TrackController.php
+└── Models/
+    ├── Track.php
+    ├── Artist.php
+    ├── Album.php
+    ├── Genre.php
+    └── Holder.php
+
+database/
+├── migrations/
+│   ├── 2026_06_09_195437_create_artists_table.php
+│   ├── 2026_06_09_195755_create_albums_table.php
+│   ├── 2026_06_09_200034_create_genres_table.php
+│   ├── 2026_06_09_200156_create_holder_table.php
+│   ├── 2026_06_09_200306_create_tracks_table.php
+│   ├── 2026_06_09_200307_create_artist_track_table.php
+│   ├── 2026_06_09_200308_create_album_track_table.php
+│   └── 2026_06_09_200309_create_genre_track_table.php
+├── factories/
+│   ├── TrackFactory.php
+│   ├── ArtistFactory.php
+│   ├── AlbumFactory.php
+│   ├── GenreFactory.php
+│   └── HolderFactory.php
+└── seeders/
+    ├── DatabaseSeeder.php
+    ├── ArtistSeeder.php
+    ├── AlbumSeeder.php
+    ├── GenreSeeder.php
+    ├── HolderSeeder.php
+    └── TrackSeeder.php
+
+resources/views/
+└── tracks.blade.php
+```
+
+### Детали реализации
+- **AgeRating** — string-backed enum, используется в миграции и касте модели
+- **Soft Deletes** — у всех 5 моделей, чтобы не терять данные при удалении
+- **PHP-атрибуты** — `#[Fillable]`, метод `casts()`
